@@ -1,32 +1,29 @@
 import java.awt.*;
 import java.awt.event.*;
-import java.awt.geom.*;
-import java.awt.image.BufferedImage;
 import java.util.Arrays;
 import javax.swing.*;
 
 /**
  * ╔══════════════════════════════════════════════════════════╗
- *  PLANTILLA ISOMÉTRICA — Java puro (java.awt / javax.swing)
+ * PLANTILLA ISOMÉTRICA ROTATORIA — Java puro
  * ╠══════════════════════════════════════════════════════════╣
- *  MATEMÁTICAS:
- *    Proyección isométrica clásica 2:1
- *    Punto 3D (gx, gy, gz) → pantalla (sx, sy):
- *      sx = origin.x + (gx - gy) * (TILE_W / 2)
- *      sy = origin.y + (gx + gy) * (TILE_H / 2) - gz * TILE_Z
+ * MATEMÁTICAS:
+ * Proyección isométrica con rotación en el eje Z.
+ * Primero se rota la coordenada del grid (rx, ry)
+ * y luego se proyecta a isométrico 2:1.
  *
- *    Detección del tile bajo el cursor (unprojection):
- *      dx = mouseX - origin.x
- *      dy = mouseY - origin.y
- *      gx = floor((dy / TILE_H + dx / TILE_W))
- *      gy = floor((dy / TILE_H - dx / TILE_W))
+ * VISIBILIDAD DE CARAS (Backface Culling):
+ * Una cara lateral es visible si al proyectar sus
+ * vértices superiores (v0 -> v1), el eje X decrece en
+ * pantalla (v1.x < v0.x).
  *
- *  CONTROLES:
- *    Clic izquierdo  → sube el tile
- *    Clic derecho    → baja el tile
- *    Arrastrar       → desplaza la cámara
- *    R               → resetea la escena
- *    +/-             → zoom
+ * CONTROLES:
+ * [Q / E]       → Rota la cámara
+ * [A]           → Auto-rotación
+ * Clic Izq/Der  → Sube / Baja el tile
+ * Arrastrar     → Desplaza la cámara
+ * +/- o Scroll  → Zoom
+ * R             → Resetea la escena
  * ╚══════════════════════════════════════════════════════════╝
  */
 public class IsometricTemplate extends JFrame {
@@ -39,38 +36,87 @@ public class IsometricTemplate extends JFrame {
     // ── Tamaño de la cuadrícula ───────────────────────────────────────────────
     private static final int GRID_COLS = 10;
     private static final int GRID_ROWS = 10;
-    private static final int MAX_HEIGHT = 6; // niveles máximos de apilamiento
+    private static final int MAX_HEIGHT = 6;
 
     // ── Estado de la escena ───────────────────────────────────────────────────
     private final int[][] heights = new int[GRID_COLS][GRID_ROWS];
     private int hoverX = -1,
-        hoverY = -1; // tile bajo el cursor
+        hoverY = -1;
 
-    // ── Cámara ────────────────────────────────────────────────────────────────
-    private double camX, camY; // traslación de cámara
+    // ── Cámara y Rotación ─────────────────────────────────────────────────────
+    private double camX, camY;
     private double zoom = 1.0;
-    private Point dragStart; // para el pan
+    private Point dragStart;
+    private double angle = 0.0;
+    private double targetAngle = 0.0;
+    private boolean autoRotate = false;
+
+    // ── Banderas para evitar repetición de teclas ─────────────────────────────
+    private boolean qPressed = false;
+    private boolean ePressed = false;
 
     // ── Paleta de colores por altura ─────────────────────────────────────────
-    // Cada altura tiene: {top, left, right}
+    // Se expandió a 5 colores para soportar las 4 caras al rotar: {Top, Norte, Este, Sur, Oeste}
     private static final Color[][] PALETTE = {
         // H = 0  — césped
-        { new Color(0x5BA85A), new Color(0x3D7A3C), new Color(0x2E5C2D) },
+        {
+            new Color(0x5BA85A),
+            new Color(0x3D7A3C),
+            new Color(0x4A8A49),
+            new Color(0x2E5C2D),
+            new Color(0x376935),
+        },
         // H = 1  — tierra
-        { new Color(0xC8A96B), new Color(0x9A7A47), new Color(0x755A2E) },
+        {
+            new Color(0xC8A96B),
+            new Color(0x9A7A47),
+            new Color(0xAD8C55),
+            new Color(0x755A2E),
+            new Color(0x876B3A),
+        },
         // H = 2  — piedra
-        { new Color(0x8C9DB5), new Color(0x5E7080), new Color(0x445565) },
+        {
+            new Color(0x8C9DB5),
+            new Color(0x5E7080),
+            new Color(0x728A9A),
+            new Color(0x445565),
+            new Color(0x546070),
+        },
         // H = 3  — madera
-        { new Color(0xA0673A), new Color(0x7A4A25), new Color(0x5B3018) },
+        {
+            new Color(0xA0673A),
+            new Color(0x7A4A25),
+            new Color(0x8D5830),
+            new Color(0x5B3018),
+            new Color(0x6B3D20),
+        },
         // H = 4  — nieve
-        { new Color(0xE8F0F8), new Color(0xB0C4D8), new Color(0x8A9EB8) },
+        {
+            new Color(0xE8F0F8),
+            new Color(0xB0C4D8),
+            new Color(0xC5D5E5),
+            new Color(0x8A9EB8),
+            new Color(0x9AADCA),
+        },
         // H = 5  — oro
-        { new Color(0xFFD700), new Color(0xC8A800), new Color(0x957900) },
+        {
+            new Color(0xFFD700),
+            new Color(0xC8A800),
+            new Color(0xDDBB00),
+            new Color(0x957900),
+            new Color(0xAA8D00),
+        },
         // H = 6  — cristal
-        { new Color(0x7DF9FF), new Color(0x50C8D0), new Color(0x2E9099) },
+        {
+            new Color(0x7DF9FF),
+            new Color(0x50C8D0),
+            new Color(0x60D8E0),
+            new Color(0x2E9099),
+            new Color(0x3DA8B0),
+        },
     };
 
-    // ── Color de hover (overlay semitransparente) ─────────────────────────────
+    // ── Colores UI ────────────────────────────────────────────────────────────
     private static final Color HOVER_TOP = new Color(255, 255, 255, 60);
     private static final Color HOVER_SIDE = new Color(255, 255, 255, 30);
     private static final Color GRID_LINE = new Color(0, 0, 0, 45);
@@ -80,27 +126,33 @@ public class IsometricTemplate extends JFrame {
     // ─────────────────────────────────────────────────────────────────────────
 
     public IsometricTemplate() {
-        super("Plantilla Isométrica — Java puro");
+        super("Plantilla Isométrica Rotatoria — Java puro");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setSize(900, 650);
         setLocationRelativeTo(null);
 
-        // Escena inicial con algo de relieve
         initScene();
 
         IsometricCanvas canvas = new IsometricCanvas();
         add(canvas);
-
         setVisible(true);
-        // Centra la cuadrícula en la ventana al inicio
+
         recentreCamera(canvas.getWidth(), canvas.getHeight());
+
+        // Bucle de renderizado para animación fluida (~60 FPS)
+        new Timer(16, e -> {
+            if (autoRotate) targetAngle += 0.008;
+            double diff = targetAngle - angle;
+            diff = diff - Math.floor(diff / (2 * Math.PI) + 0.5) * 2 * Math.PI; // Normaliza a (-π, π]
+            angle += diff * 0.12; // Lerp
+            canvas.repaint();
+        })
+            .start();
     }
 
-    /** Genera una escena inicial con variaciones de altura. */
     private void initScene() {
         for (int x = 0; x < GRID_COLS; x++) {
             for (int y = 0; y < GRID_ROWS; y++) {
-                // Función de ejemplo: colina suave + borde en 0
                 double nx = (x - GRID_COLS / 2.0) / (GRID_COLS / 2.0);
                 double ny = (y - GRID_ROWS / 2.0) / (GRID_ROWS / 2.0);
                 double dist = Math.sqrt(nx * nx + ny * ny);
@@ -110,14 +162,51 @@ public class IsometricTemplate extends JFrame {
         }
     }
 
-    /** Centra la cámara sobre la cuadrícula. */
     private void recentreCamera(int w, int h) {
-        // Centro del grid en coordenadas pantalla (sin cámara)
-        double cx =
-            (GRID_COLS - GRID_ROWS) * 0.5 * ((BASE_TILE_W * zoom) / 2.0) +
-            (GRID_COLS + GRID_ROWS) * 0.5 * 0;
         camX = w / 2.0;
         camY = h / 4.0 + 40;
+        angle = 0;
+        targetAngle = 0;
+        zoom = 1.0;
+    }
+
+    // =========================================================================
+    //  MATEMÁTICAS 3D -> 2D
+    // =========================================================================
+
+    /** Transforma un punto 3D del grid a coordenadas 2D de pantalla. */
+    private double[] project(double wx, double wy, double wz) {
+        double tw = BASE_TILE_W * zoom;
+        double th = BASE_TILE_H * zoom;
+        double tz = BASE_TILE_Z * zoom;
+
+        double cx = GRID_COLS / 2.0;
+        double cy = GRID_ROWS / 2.0;
+
+        double cos = Math.cos(angle);
+        double sin = Math.sin(angle);
+
+        // Trasladar al origen, rotar y volver
+        double dx = wx - cx;
+        double dy = wy - cy;
+        double rx = dx * cos - dy * sin + cx;
+        double ry = dx * sin + dy * cos + cy;
+
+        return new double[] {
+            camX + (rx - ry) * (tw / 2.0),
+            camY + (rx + ry) * (th / 2.0) - wz * tz,
+        };
+    }
+
+    /** Calcula la profundidad para ordenar los tiles (Painter's Algorithm). */
+    private double tileDepth(int gx, int gy) {
+        double cx = GRID_COLS / 2.0,
+            cy = GRID_ROWS / 2.0;
+        double cos = Math.cos(angle),
+            sin = Math.sin(angle);
+        double dx = (gx + 0.5) - cx,
+            dy = (gy + 0.5) - cy;
+        return (dx * cos - dy * sin) + (dx * sin + dy * cos);
     }
 
     // =========================================================================
@@ -125,14 +214,17 @@ public class IsometricTemplate extends JFrame {
     // =========================================================================
     private class IsometricCanvas extends JPanel {
 
+        private final Integer[] order = new Integer[GRID_COLS * GRID_ROWS];
+        private final double[] depth = new double[GRID_COLS * GRID_ROWS];
+
         IsometricCanvas() {
             setBackground(BG_TOP);
+            for (int i = 0; i < order.length; i++) order[i] = i;
 
             MouseAdapter mouse = new MouseAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
                     updateHover(e.getX(), e.getY());
-                    repaint();
                 }
 
                 @Override
@@ -142,7 +234,6 @@ public class IsometricTemplate extends JFrame {
                     else if (e.getButton() == MouseEvent.BUTTON3) modifyTile(
                         -1
                     );
-                    repaint();
                 }
 
                 @Override
@@ -152,34 +243,60 @@ public class IsometricTemplate extends JFrame {
                         camY += e.getY() - dragStart.y;
                         dragStart = e.getPoint();
                         updateHover(e.getX(), e.getY());
-                        repaint();
                     }
+                }
+
+                @Override
+                public void mouseWheelMoved(MouseWheelEvent e) {
+                    double f = e.getWheelRotation() < 0 ? 1.1 : 1.0 / 1.1;
+                    zoom = Math.max(0.3, Math.min(3.0, zoom * f));
+                    updateHover(e.getX(), e.getY());
                 }
 
                 @Override
                 public void mouseExited(MouseEvent e) {
                     hoverX = hoverY = -1;
-                    repaint();
                 }
             };
             addMouseMotionListener(mouse);
             addMouseListener(mouse);
+            addMouseWheelListener(mouse);
 
             addKeyListener(
                 new KeyAdapter() {
                     @Override
                     public void keyPressed(KeyEvent e) {
-                        if (e.getKeyChar() == 'r' || e.getKeyChar() == 'R') {
-                            initScene();
-                            recentreCamera(getWidth(), getHeight());
+                        int k = e.getKeyCode();
+                        if (k == KeyEvent.VK_R) recentreCamera(
+                            getWidth(),
+                            getHeight()
+                        );
+
+                        // Solo rotamos si la tecla no estaba ya presionada
+                        if (k == KeyEvent.VK_Q && !qPressed) {
+                            targetAngle -= Math.PI / 4;
+                            qPressed = true;
                         }
-                        if (e.getKeyChar() == '+' || e.getKeyChar() == '=') {
-                            zoom = Math.min(zoom * 1.1, 3.0);
+                        if (k == KeyEvent.VK_E && !ePressed) {
+                            targetAngle += Math.PI / 4;
+                            ePressed = true;
                         }
-                        if (e.getKeyChar() == '-') {
-                            zoom = Math.max(zoom / 1.1, 0.3);
-                        }
-                        repaint();
+
+                        if (k == KeyEvent.VK_A) autoRotate = !autoRotate;
+                        if (
+                            k == KeyEvent.VK_PLUS || k == KeyEvent.VK_EQUALS
+                        ) zoom = Math.min(zoom * 1.1, 3.0);
+                        if (k == KeyEvent.VK_MINUS) zoom = Math.max(
+                            zoom / 1.1,
+                            0.3
+                        );
+                    }
+
+                    @Override
+                    public void keyReleased(KeyEvent e) {
+                        int k = e.getKeyCode();
+                        if (k == KeyEvent.VK_Q) qPressed = false;
+                        if (k == KeyEvent.VK_E) ePressed = false;
                     }
                 }
             );
@@ -191,7 +308,6 @@ public class IsometricTemplate extends JFrame {
             super.paintComponent(g);
             Graphics2D g2 = (Graphics2D) g;
 
-            // Antialiasing
             g2.setRenderingHint(
                 RenderingHints.KEY_ANTIALIASING,
                 RenderingHints.VALUE_ANTIALIAS_ON
@@ -201,105 +317,95 @@ public class IsometricTemplate extends JFrame {
                 RenderingHints.VALUE_STROKE_PURE
             );
 
-            // Fondo degradado
             drawBackground(g2);
 
-            // ── Render isométrico ─────────────────────────────────────────────
-            // Orden correcto de pintado: painter's algorithm
-            // x + y creciente → más cercano al espectador
-            for (int sum = 0; sum <= (GRID_COLS - 1) + (GRID_ROWS - 1); sum++) {
-                for (int x = 0; x < GRID_COLS; x++) {
-                    int y = sum - x;
-                    if (y < 0 || y >= GRID_ROWS) continue;
-                    drawTile(g2, x, y, heights[x][y]);
-                }
+            // Ordenamiento por profundidad
+            for (int i = 0; i < order.length; i++) {
+                depth[i] = tileDepth(i / GRID_ROWS, i % GRID_ROWS);
+            }
+            Arrays.sort(order, (a, b) -> Double.compare(depth[a], depth[b]));
+
+            // Renderizado de atrás hacia adelante
+            for (int idx : order) {
+                drawTile(g2, idx / GRID_ROWS, idx % GRID_ROWS);
             }
 
-            // HUD / overlay
             drawHUD(g2);
         }
 
         private void drawBackground(Graphics2D g2) {
-            int w = getWidth(),
-                h = getHeight();
-            GradientPaint gp = new GradientPaint(0, 0, BG_TOP, 0, h, BG_BOTTOM);
+            GradientPaint gp = new GradientPaint(
+                0,
+                0,
+                BG_TOP,
+                0,
+                getHeight(),
+                BG_BOTTOM
+            );
             g2.setPaint(gp);
-            g2.fillRect(0, 0, w, h);
+            g2.fillRect(0, 0, getWidth(), getHeight());
         }
 
-        /**
-         * Dibuja un tile isométrico en (gx, gy) con altura gz.
-         * Cada tile tiene tres caras: top, left, right.
-         */
-        private void drawTile(Graphics2D g2, int gx, int gy, int gz) {
-            double tw = BASE_TILE_W * zoom;
-            double th = BASE_TILE_H * zoom;
+        private void drawTile(Graphics2D g2, int gx, int gy) {
+            int gz = heights[gx][gy];
+            boolean hover = (gx == hoverX && gy == hoverY);
+            Color[] pal = PALETTE[Math.min(gz, PALETTE.length - 1)];
             double tz = BASE_TILE_Z * zoom;
 
-            // ── Proyección isométrica ─────────────────────────────────────────
-            // Vértice superior del rombo (sin altura Z)
-            double sx = camX + (gx - gy) * (tw / 2.0);
-            double sy = camY + (gx + gy) * (th / 2.0) - gz * tz;
+            // 4 vértices de la cara superior (N, E, S, W)
+            double[] pA = project(gx, gy, gz);
+            double[] pB = project(gx + 1, gy, gz);
+            double[] pC = project(gx + 1, gy + 1, gz);
+            double[] pD = project(gx, gy + 1, gz);
+            double[][] verts = { pA, pB, pC, pD };
 
-            // ── 5 puntos clave del tile ───────────────────────────────────────
-            //        top(T)
-            //       /       \
-            //     lM         rM   ← mitades laterales
-            //       \       /
-            //        bot(B)
-            //
-            // Con cara Z (lateral), proyectados hacia abajo tz unidades:
-            //
-            //    T ─── rM         rM ─── T
-            //    |      |         |      |
-            //   lMz ─ rMz        rMz ─ Tz     (no se usa Tz aquí)
-
-            double tx = sx,
-                tY = sy; // top
-            double lmx = sx - tw / 2.0,
-                lmY = sy + th / 2.0; // left-mid
-            double rmx = sx + tw / 2.0,
-                rmY = sy + th / 2.0; // right-mid
-            double bx = sx,
-                bY = sy + th; // bottom
-
-            // Caras laterales van desde la fila del rombo hacia abajo tz
-            double lmxz = lmx,
-                lmYz = lmY + tz;
-            double rmxz = rmx,
-                rmYz = rmY + tz;
-            double bxz = bx,
-                bYz = bY + tz;
-
-            Color[] pal = PALETTE[Math.min(gz, PALETTE.length - 1)];
-            boolean hover = (gx == hoverX && gy == hoverY);
-
-            // ── Cara IZQUIERDA ────────────────────────────────────────────────
+            // ── Caras laterales ───────────────────────────────────────────────
             if (gz > 0) {
-                Polygon left = poly(lmx, lmY, bx, bY, bxz, bYz, lmxz, lmYz);
-                g2.setColor(blend(pal[1], HOVER_SIDE, hover ? 1 : 0));
-                g2.fill(left);
-                g2.setColor(GRID_LINE);
-                g2.draw(left);
+                for (int f = 0; f < 4; f++) {
+                    double[] v0 = verts[f];
+                    double[] v1 = verts[(f + 1) % 4];
+
+                    // Visible si el vector va de derecha a izquierda en pantalla
+                    if (v1[0] < v0[0]) {
+                        Color fc = hover
+                            ? blend(pal[f + 1], HOVER_SIDE, 1)
+                            : pal[f + 1];
+                        g2.setColor(fc);
+
+                        Polygon side = poly(
+                            v0[0],
+                            v0[1],
+                            v1[0],
+                            v1[1],
+                            v1[0],
+                            v1[1] + tz,
+                            v0[0],
+                            v0[1] + tz
+                        );
+                        g2.fill(side);
+                        g2.setColor(GRID_LINE);
+                        g2.draw(side);
+                    }
+                }
             }
 
-            // ── Cara DERECHA ──────────────────────────────────────────────────
-            if (gz > 0) {
-                Polygon right = poly(rmx, rmY, bx, bY, bxz, bYz, rmxz, rmYz);
-                g2.setColor(blend(pal[2], HOVER_SIDE, hover ? 1 : 0));
-                g2.fill(right);
-                g2.setColor(GRID_LINE);
-                g2.draw(right);
-            }
-
-            // ── Cara SUPERIOR (top) ───────────────────────────────────────────
-            Polygon top = poly(tx, tY, rmx, rmY, bx, bY, lmx, lmY);
+            // ── Cara superior ─────────────────────────────────────────────────
+            Polygon top = poly(
+                pA[0],
+                pA[1],
+                pB[0],
+                pB[1],
+                pC[0],
+                pC[1],
+                pD[0],
+                pD[1]
+            );
             g2.setColor(hover ? blend(pal[0], HOVER_TOP, 1) : pal[0]);
             g2.fill(top);
             g2.setColor(GRID_LINE);
             g2.draw(top);
 
-            // ── Coordenadas (debug opcional) ──────────────────────────────────
+            // Debug (opcional) en zoom alto
             if (zoom >= 1.4 && hover) {
                 g2.setColor(Color.WHITE);
                 g2.setFont(
@@ -307,11 +413,12 @@ public class IsometricTemplate extends JFrame {
                 );
                 String label = "(" + gx + "," + gy + ")";
                 FontMetrics fm = g2.getFontMetrics();
-                int lw = fm.stringWidth(label);
+                double cx = (pA[0] + pB[0] + pC[0] + pD[0]) / 4.0;
+                double cy = (pA[1] + pB[1] + pC[1] + pD[1]) / 4.0;
                 g2.drawString(
                     label,
-                    (int) (sx - lw / 2.0),
-                    (int) (sy + th / 2.0 + fm.getAscent() / 2.0)
+                    (int) (cx - fm.stringWidth(label) / 2.0),
+                    (int) (cy + fm.getAscent() / 2.0)
                 );
             }
         }
@@ -322,33 +429,41 @@ public class IsometricTemplate extends JFrame {
                 RenderingHints.VALUE_TEXT_ANTIALIAS_ON
             );
 
-            // Panel semi-transparente
             g2.setColor(new Color(10, 18, 30, 200));
-            g2.fillRoundRect(12, 12, 230, 130, 14, 14);
+            g2.fillRoundRect(12, 12, 260, 165, 14, 14);
             g2.setColor(new Color(100, 180, 255, 80));
             g2.setStroke(new BasicStroke(1f));
-            g2.drawRoundRect(12, 12, 230, 130, 14, 14);
+            g2.drawRoundRect(12, 12, 260, 165, 14, 14);
 
             g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
-            g2.setColor(new Color(160, 220, 255));
 
+            double deg = ((Math.toDegrees(angle) % 360) + 360) % 360;
             String[] lines = {
-                " PLANTILLA ISOMÉTRICA",
-                " ─────────────────────────",
-                " [Clic ↑] sube tile",
-                " [Clic ↓] baja tile",
+                " PLANTILLA ISOMÉTRICA ROTATORIA",
+                " ────────────────────────────────",
+                " [Q / E]     rota cámara",
+                " [A]         auto-rotar: " + (autoRotate ? "ON  ◉" : "OFF ○"),
+                " [Clic ↑/↓]  sube / baja tile",
                 " [Arrastrar] mueve cámara",
                 " [+/-] zoom  [R] reset",
+                "",
                 String.format(
-                    " zoom: %.2f × hover: %s",
+                    " zoom: %.2f ×  hover: %s",
                     zoom,
                     hoverX >= 0 ? "(" + hoverX + "," + hoverY + ")" : "—"
                 ),
+                String.format(" ángulo: %05.1f°", deg),
             };
 
             for (int i = 0; i < lines.length; i++) {
                 if (i == 0) g2.setColor(new Color(200, 240, 255));
                 else if (i == 1) g2.setColor(new Color(60, 100, 140));
+                else if (i == 3) g2.setColor(
+                    autoRotate
+                        ? new Color(80, 255, 150)
+                        : new Color(160, 220, 200)
+                );
+                else if (i >= 8) g2.setColor(new Color(255, 210, 80));
                 else g2.setColor(new Color(160, 220, 200));
                 g2.drawString(lines[i], 18, 30 + i * 16);
             }
@@ -356,13 +471,88 @@ public class IsometricTemplate extends JFrame {
     }
 
     // =========================================================================
-    //  HELPERS
+    //  INTERACCIÓN Y DETECCIÓN (HOVER)
     // =========================================================================
+    private void updateHover(int mx, int my) {
+        double tz = BASE_TILE_Z * zoom;
+        int n = GRID_COLS * GRID_ROWS;
+        Integer[] ord = new Integer[n];
+        double[] dep = new double[n];
 
-    /**
-     * Crea un Polygon a partir de pares (x,y) como doubles.
-     * Acepta exactamente 4 puntos (8 valores).
-     */
+        for (int i = 0; i < n; i++) {
+            ord[i] = i;
+            dep[i] = tileDepth(i / GRID_ROWS, i % GRID_ROWS);
+        }
+        // Ordenamos de adelante hacia atrás para interceptar clics correctamente
+        Arrays.sort(ord, (a, b) -> Double.compare(dep[b], dep[a]));
+
+        hoverX = hoverY = -1;
+
+        for (int k : ord) {
+            int gx = k / GRID_ROWS;
+            int gy = k % GRID_ROWS;
+            int gz = heights[gx][gy];
+
+            double[] pA = project(gx, gy, gz);
+            double[] pB = project(gx + 1, gy, gz);
+            double[] pC = project(gx + 1, gy + 1, gz);
+            double[] pD = project(gx, gy + 1, gz);
+
+            // Colisión con la cara superior
+            if (
+                pointInPolygon(
+                    mx,
+                    my,
+                    new double[] { pA[0], pB[0], pC[0], pD[0] },
+                    new double[] { pA[1], pB[1], pC[1], pD[1] }
+                )
+            ) {
+                hoverX = gx;
+                hoverY = gy;
+                return;
+            }
+
+            // Colisión con las caras laterales (solo las frontales visibles)
+            if (gz > 0) {
+                double[][] verts = { pA, pB, pC, pD };
+                for (int f = 0; f < 4; f++) {
+                    double[] v0 = verts[f],
+                        v1 = verts[(f + 1) % 4];
+                    if (v1[0] < v0[0]) {
+                        if (
+                            pointInPolygon(
+                                mx,
+                                my,
+                                new double[] { v0[0], v1[0], v1[0], v0[0] },
+                                new double[] {
+                                    v0[1],
+                                    v1[1],
+                                    v1[1] + tz,
+                                    v0[1] + tz,
+                                }
+                            )
+                        ) {
+                            hoverX = gx;
+                            hoverY = gy;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void modifyTile(int delta) {
+        if (hoverX < 0 || hoverY < 0) return;
+        heights[hoverX][hoverY] = Math.max(
+            0,
+            Math.min(MAX_HEIGHT, heights[hoverX][hoverY] + delta)
+        );
+    }
+
+    // =========================================================================
+    //  HELPERS MATEMÁTICOS Y GRÁFICOS
+    // =========================================================================
     private static Polygon poly(
         double x0,
         double y0,
@@ -380,92 +570,6 @@ public class IsometricTemplate extends JFrame {
         );
     }
 
-    /**
-     * Mezcla dos colores según t ∈ [0,1].
-     * Cuando t=0 devuelve base; t=1 añade overlay encima (alpha-blend).
-     */
-    private static Color blend(Color base, Color overlay, int doIt) {
-        if (doIt == 0) return base;
-        float a = overlay.getAlpha() / 255f;
-        int r = (int) (base.getRed() * (1 - a) + overlay.getRed() * a);
-        int g = (int) (base.getGreen() * (1 - a) + overlay.getGreen() * a);
-        int b = (int) (base.getBlue() * (1 - a) + overlay.getBlue() * a);
-        return new Color(Math.min(255, r), Math.min(255, g), Math.min(255, b));
-    }
-
-    /**
-     * Convierte coordenadas de pantalla → coordenadas de cuadrícula.
-     *
-     *  Matemáticas (inversión de la proyección):
-     *    dx = mouseX - camX
-     *    dy = mouseY - camY
-     *    gx = floor( dy/th + dx/tw )
-     *    gy = floor( dy/th - dx/tw )
-     *
-     *  Nota: ignoramos Z para la detección (usamos la superficie del tile
-     *  en su altura real, con un ajuste sencillo por heights).
-     */
-    private void updateHover(int mx, int my) {
-        double tw = BASE_TILE_W * zoom;
-        double th = BASE_TILE_H * zoom;
-        double tz = BASE_TILE_Z * zoom;
-
-        int bestX = -1,
-            bestY = -1;
-
-        // Iteramos sobre tiles y detectamos cuál está bajo el cursor
-        // en orden correcto (igual que el render) para respetar el Z correcto.
-        for (int sum = (GRID_COLS - 1) + (GRID_ROWS - 1); sum >= 0; sum--) {
-            for (int x = GRID_COLS - 1; x >= 0; x--) {
-                int y = sum - x;
-                if (y < 0 || y >= GRID_ROWS) continue;
-                int gz = heights[x][y];
-
-                double sx = camX + (x - y) * (tw / 2.0);
-                double sy = camY + (x + y) * (th / 2.0) - gz * tz;
-
-                // Top face del tile (rombo)
-                double[] topX = { sx, sx + tw / 2, sx, sx - tw / 2 };
-                double[] topY = { sy, sy + th / 2, sy + th, sy + th / 2 };
-
-                if (pointInPolygon(mx, my, topX, topY)) {
-                    bestX = x;
-                    bestY = y;
-                    break;
-                }
-                // Caras laterales si gz > 0
-                if (gz > 0) {
-                    double lmY = sy + th / 2.0;
-                    double bY = sy + th;
-                    // Cara izquierda: lm → bot → bot+z → lm+z
-                    double[] lx = { sx - tw / 2, sx, sx, sx - tw / 2 };
-                    double[] ly = { lmY, bY, bY + tz, lmY + tz };
-                    if (pointInPolygon(mx, my, lx, ly)) {
-                        bestX = x;
-                        bestY = y;
-                        break;
-                    }
-                    // Cara derecha
-                    double[] rx = { sx + tw / 2, sx, sx, sx + tw / 2 };
-                    double[] ry = { lmY, bY, bY + tz, lmY + tz };
-                    if (pointInPolygon(mx, my, rx, ry)) {
-                        bestX = x;
-                        bestY = y;
-                        break;
-                    }
-                }
-            }
-            if (bestX >= 0) break;
-        }
-
-        hoverX = bestX;
-        hoverY = bestY;
-    }
-
-    /**
-     * Ray-casting: ¿está el punto (px, py) dentro del polígono?
-     * Algoritmo clásico de paridad de cruces.
-     */
     private static boolean pointInPolygon(
         double px,
         double py,
@@ -486,18 +590,15 @@ public class IsometricTemplate extends JFrame {
         return inside;
     }
 
-    /** Sube o baja el tile en hover. */
-    private void modifyTile(int delta) {
-        if (hoverX < 0 || hoverY < 0) return;
-        heights[hoverX][hoverY] = Math.max(
-            0,
-            Math.min(MAX_HEIGHT, heights[hoverX][hoverY] + delta)
-        );
+    private static Color blend(Color base, Color overlay, int doIt) {
+        if (doIt == 0) return base;
+        float a = overlay.getAlpha() / 255f;
+        int r = (int) (base.getRed() * (1 - a) + overlay.getRed() * a);
+        int g = (int) (base.getGreen() * (1 - a) + overlay.getGreen() * a);
+        int b = (int) (base.getBlue() * (1 - a) + overlay.getBlue() * a);
+        return new Color(Math.min(255, r), Math.min(255, g), Math.min(255, b));
     }
 
-    // =========================================================================
-    //  MAIN
-    // =========================================================================
     public static void main(String[] args) {
         SwingUtilities.invokeLater(IsometricTemplate::new);
     }
