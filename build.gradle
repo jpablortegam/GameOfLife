@@ -1,6 +1,7 @@
 plugins {
     id 'java'
     id 'application'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
 }
 
 repositories {
@@ -10,18 +11,23 @@ repositories {
 dependencies {
 }
 
-sourceSets {
-    main {
-        java {
-            srcDirs = ['src']
-        }
-    }
+javafx {
+    version = '22'
+
+    modules = [
+        'javafx.controls',
+        'javafx.graphics'
+    ]
 }
 
 application {
-    mainClass.set('IsometricTemplate')
+    mainClass.set('IsometricTemplateFX')
 }
 
-run {
-    standardInput = System.in
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/main/java']
+        }
+    }
 }
