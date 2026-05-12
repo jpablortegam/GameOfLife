@@ -1,3 +1,5 @@
+package com.example.gameoflife;
+
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -90,8 +92,8 @@ public final class IsometricTemplateFX extends Application {
     // Colores sólidos reemplazando las transparencias originales para mayor rendimiento
     private static final Color PULSE_COLOR = Color.web("#FFC864");
     private static final Color STROKE_NORMAL = Color.web("#141414");
-    private static final Color HUD_BG = Color.web("#060E1C");
-    private static final Color HUD_STROKE = Color.web("#3787FF");
+    // private static final Color HUD_BG = Color.web("#060E1C");
+    // private static final Color HUD_STROKE = Color.web("#3787FF");
     private static final Color BRUSH_STROKE = Color.web("#5AF0FF");
 
     static {
@@ -738,117 +740,217 @@ public final class IsometricTemplateFX extends Application {
     }
 
     private void renderHUD() {
-        double pw = 345,
-            ph = 236;
+        final double X = 14,
+            Y = 14;
+        final double PW = 330,
+            PH = 310;
+        final double CORNER = 16;
 
-        // HUD totalmente opaco para respetar la regla de no transparencias
-        gc.setFill(HUD_BG);
-        gc.fillRoundRect(12, 12, pw, ph, 14, 14);
+        // ── Fondo con borde sutil ──────────────────────────────────────────────
+        gc.setFill(Color.rgb(6, 10, 20, 0.92));
+        gc.fillRoundRect(X, Y, PW, PH, CORNER, CORNER);
 
-        gc.setStroke(HUD_STROKE);
-        gc.setLineWidth(1.3);
-        gc.strokeRoundRect(12, 12, pw, ph, 14, 14);
+        gc.setStroke(Color.rgb(40, 100, 255, 0.25));
+        gc.setLineWidth(1.2);
+        gc.strokeRoundRect(X, Y, PW, PH, CORNER, CORNER);
 
+        // Acento superior (barra de color)
         gc.setFill(Color.web("#46C896"));
-        gc.fillRoundRect(12, 12, pw, 4, 4, 4);
+        gc.fillRoundRect(X, Y, PW, 4, 4, 4);
 
+        // ── Helpers locales ────────────────────────────────────────────────────
+        final double COL1 = X + 14; // margen izquierdo texto
+        double cy = Y + 22; // cursor vertical
+
+        // ── Título ────────────────────────────────────────────────────────────
+        gc.setFont(HUD_FONT_BOLD);
+        gc.setFill(Color.web("#78FFB9"));
+        gc.fillText("⬡ ISOMÉTRICA", COL1, cy);
+
+        gc.setFont(HUD_FONT_NORMAL);
+        gc.setFill(Color.rgb(60, 140, 100, 0.7));
+        gc.fillText("v2 · optimizada", COL1 + 112, cy);
+        cy += 14;
+
+        // ── Separador ─────────────────────────────────────────────────────────
+        gc.setStroke(Color.rgb(40, 100, 200, 0.35));
+        gc.setLineWidth(1);
+        gc.strokeLine(COL1, cy, X + PW - 14, cy);
+        cy += 12;
+
+        // ── Sección NAVEGACIÓN ────────────────────────────────────────────────
+        sectionLabel("NAVEGACIÓN", COL1, cy, gc);
+        cy += 16;
+
+        hudRow("⟳", "[Q / E]", "rotar cámara", false, COL1, cy, gc);
+        cy += 15;
+        hudRow("↖", "[W A S D]", "mover cámara", false, COL1, cy, gc);
+        cy += 15;
+        hudRow("⊕", "[Mid-Drag]", "arrastrar mapa", false, COL1, cy, gc);
+        cy += 15;
+        hudRow("⊙", "[Wheel]", "zoom al cursor", false, COL1, cy, gc);
+        cy += 15;
+
+        boolean autoOn = camera.autoRotate;
+        hudRow(
+            "▶",
+            "[Space]",
+            "auto-rotar: " + (autoOn ? "ON" : "OFF"),
+            autoOn,
+            COL1,
+            cy,
+            gc
+        );
+        cy += 16;
+
+        // ── Separador ─────────────────────────────────────────────────────────
+        gc.setStroke(Color.rgb(40, 100, 200, 0.35));
+        gc.strokeLine(COL1, cy, X + PW - 14, cy);
+        cy += 12;
+
+        // ── Sección EDICIÓN ───────────────────────────────────────────────────
+        sectionLabel("EDICIÓN", COL1, cy, gc);
+        cy += 16;
+
+        hudRow(
+            "✎",
+            "[Clic / Drag]",
+            "pintar  Izq(+)  Der(−)",
+            false,
+            COL1,
+            cy,
+            gc
+        );
+        cy += 15;
+        hudRow(
+            "◉",
+            "[[ / ]]",
+            "brush radius: " + brushRadius,
+            false,
+            COL1,
+            cy,
+            gc
+        );
+        cy += 15;
+        hudRow("↺", "[Ctrl+Z / Y]", "undo / redo", false, COL1, cy, gc);
+        cy += 15;
+        hudRow(
+            "⬚",
+            "[G] [F] [T]",
+            "random · flat · smooth",
+            false,
+            COL1,
+            cy,
+            gc
+        );
+        cy += 15;
+        hudRow("✕", "[ESC]", "reset escena", false, COL1, cy, gc);
+        cy += 16;
+
+        // ── Separador ─────────────────────────────────────────────────────────
+        gc.setStroke(Color.rgb(40, 100, 200, 0.35));
+        gc.strokeLine(COL1, cy, X + PW - 14, cy);
+        cy += 12;
+
+        // ── Sección INFO ──────────────────────────────────────────────────────
         double angleDeg = ((Math.toDegrees(camera.angle) % 360) + 360) % 360;
+        String hoverText =
+            hoverX >= 0
+                ? String.format(
+                      "(%d, %d)  h=%d",
+                      hoverX,
+                      hoverY,
+                      heights[tileIndex(hoverX, hoverY)]
+                  )
+                : "—";
+        String selectText =
+            selectX >= 0
+                ? String.format(
+                      "(%d, %d)  h=%d",
+                      selectX,
+                      selectY,
+                      heights[tileIndex(selectX, selectY)]
+                  )
+                : "—";
 
-        String hoverText = (hoverX >= 0)
-            ? String.format(
-                  "(%d,%d)  h=%d",
-                  hoverX,
-                  hoverY,
-                  heights[tileIndex(hoverX, hoverY)]
-              )
-            : "—";
-        String selectText = (selectX >= 0)
-            ? String.format(
-                  "(%d,%d)  h=%d",
-                  selectX,
-                  selectY,
-                  heights[tileIndex(selectX, selectY)]
-              )
-            : "—";
+        infoRow("zoom", String.format("%.2f ×", camera.zoom), COL1, cy, gc);
+        cy += 15;
+        infoRow("ángulo", String.format("%05.1f °", angleDeg), COL1, cy, gc);
+        cy += 15;
+        infoRow("hover", hoverText, COL1, cy, gc);
+        cy += 15;
 
-        Object[][] lines = {
-            { Color.web("#78FFB9"), " ISOMÉTRICA — optimizada", HUD_FONT_BOLD },
-            {
-                Color.web("#2352A0"),
-                " ─────────────────────────────────────",
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#8CD2AF"),
-                " [Q / E]    rotar cámara",
-                HUD_FONT_NORMAL,
-            },
-            {
-                camera.autoRotate ? Color.web("#46FF91") : Color.web("#82C8A5"),
-                " [Space]    auto-rotar: " + (camera.autoRotate ? "ON" : "OFF"),
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#8CD2AF"),
-                " [WASD / Mid-Drag] mover cámara",
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#8CD2AF"),
-                " [Clic/Drag] pintar: Izq(+) Der(-)",
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#8CD2AF"),
-                " [Wheel]     zoom al cursor",
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#8CD2AF"),
-                " [[ / ]]     brush radius",
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#8CD2AF"),
-                " [G] random  [F] flat  [T] smooth",
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#8CD2AF"),
-                " [Ctrl+Z/Y]  undo / redo",
-                HUD_FONT_NORMAL,
-            },
-            { Color.web("#8CD2AF"), " [ESC] reset escena", HUD_FONT_NORMAL },
-            {
-                Color.web("#2352A0"),
-                " ─────────────────────────────────────",
-                HUD_FONT_NORMAL,
-            },
-            {
-                Color.web("#FFD237"),
-                String.format(
-                    " zoom: %.2f×   ángulo: %05.1f°   brush: %d",
-                    camera.zoom,
-                    angleDeg,
-                    brushRadius
-                ),
-                HUD_FONT_BOLD,
-            },
-            { Color.web("#64E4FF"), " hover: " + hoverText, HUD_FONT_BOLD },
-            {
-                selectX >= 0 ? Color.web("#FFB450") : Color.web("#A0A0A0"),
-                " seleccionado: " + selectText,
-                HUD_FONT_BOLD,
-            },
-        };
+        // Fila seleccionado con color diferente si hay selección
+        gc.setFont(HUD_FONT_NORMAL);
+        gc.setFill(Color.rgb(80, 160, 160, 0.6));
+        gc.fillText("▸ selec", COL1, cy);
+        gc.setFill(
+            selectX >= 0 ? Color.web("#FFB450") : Color.rgb(160, 160, 160, 0.5)
+        );
+        gc.setFont(HUD_FONT_BOLD);
+        gc.fillText(selectText, COL1 + 72, cy);
+    }
 
-        double y = 32;
-        for (Object[] line : lines) {
-            gc.setFill((Color) line[0]);
-            gc.setFont((Font) line[2]);
-            gc.fillText((String) line[1], 20, y);
-            y += 16;
-        }
+    // ── Helpers de dibujo ──────────────────────────────────────────────────────
+
+    /** Etiqueta de sección en mayúsculas con color tenue. */
+    private void sectionLabel(
+        String label,
+        double x,
+        double y,
+        GraphicsContext gc
+    ) {
+        gc.setFont(HUD_FONT_NORMAL);
+        gc.setFill(Color.rgb(60, 130, 200, 0.55));
+        gc.fillText(label, x, y);
+    }
+
+    /**
+     * Fila de atajo: icono · tecla · descripción.
+     * Si {@code highlight} es true la descripción se pinta en verde activo.
+     */
+    private void hudRow(
+        String icon,
+        String key,
+        String desc,
+        boolean highlight,
+        double x,
+        double y,
+        GraphicsContext gc
+    ) {
+        // Icono
+        gc.setFont(HUD_FONT_NORMAL);
+        gc.setFill(Color.rgb(70, 200, 140, 0.55));
+        gc.fillText(icon, x, y);
+
+        // Tecla
+        gc.setFill(Color.web("#C8E4FF"));
+        gc.setFont(HUD_FONT_BOLD);
+        gc.fillText(key, x + 16, y);
+
+        // Descripción
+        gc.setFont(HUD_FONT_NORMAL);
+        gc.setFill(
+            highlight ? Color.web("#46FF91") : Color.rgb(140, 200, 175, 0.75)
+        );
+        gc.fillText(desc, x + 16 + 88, y);
+    }
+
+    /** Fila de dato: etiqueta · valor resaltado. */
+    private void infoRow(
+        String label,
+        String value,
+        double x,
+        double y,
+        GraphicsContext gc
+    ) {
+        gc.setFont(HUD_FONT_NORMAL);
+        gc.setFill(Color.rgb(80, 160, 160, 0.6));
+        gc.fillText("▸ " + label, x, y);
+
+        gc.setFont(HUD_FONT_BOLD);
+        gc.setFill(Color.web("#64E4FF"));
+        gc.fillText(value, x + 72, y);
     }
 
     private void modifyTerrain(int cx, int cy, int delta) {

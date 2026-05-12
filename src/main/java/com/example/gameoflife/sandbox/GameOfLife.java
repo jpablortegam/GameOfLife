@@ -1,3 +1,5 @@
+package com.example.gameoflife.sandbox;
+
 import java.io.PrintStream;
 import java.util.Scanner;
 
@@ -103,27 +105,29 @@ public class GameOfLife {
     public static void main(String[] args) throws Exception {
         System.setOut(new PrintStream(System.out, true, "UTF-8"));
 
-        Scanner sc = new Scanner(System.in);
+        try (Scanner sc = new Scanner(System.in)) {
+            System.out.println(
+                "\n  === JUEGO DE LA VIDA (Tablero Toroidal) ==="
+            );
+            System.out.println("  Seleccione un patron inicial:");
+            System.out.println("  1. Glider");
+            System.out.println("  2. Blinker");
+            System.out.println("  3. Aleatorio");
+            System.out.print("  Opcion: ");
 
-        System.out.println("\n  === JUEGO DE LA VIDA (Tablero Toroidal) ===");
-        System.out.println("  Seleccione un patron inicial:");
-        System.out.println("  1. Glider");
-        System.out.println("  2. Blinker");
-        System.out.println("  3. Aleatorio");
-        System.out.print("  Opcion: ");
+            int opcion = sc.hasNextInt() ? sc.nextInt() : 3;
+            int[][] grid = switch (opcion) {
+                case 1 -> glider();
+                case 2 -> blinker();
+                default -> random();
+            };
 
-        int opcion = sc.hasNextInt() ? sc.nextInt() : 3;
-        int[][] grid = switch (opcion) {
-            case 1 -> glider();
-            case 2 -> blinker();
-            default -> random();
-        };
-
-        System.out.println();
-        for (int gen = 0; ; gen++) {
-            print(grid, gen);
-            Thread.sleep(200);
-            grid = nextGeneration(grid);
+            System.out.println();
+            for (int gen = 0; ; gen++) {
+                print(grid, gen);
+                Thread.sleep(200);
+                grid = nextGeneration(grid);
+            }
         }
     }
 }

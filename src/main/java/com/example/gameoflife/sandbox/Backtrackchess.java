@@ -1,3 +1,5 @@
+package com.example.gameoflife.sandbox;
+
 import java.io.*;
 import java.util.*;
 
