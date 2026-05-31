@@ -89,12 +89,22 @@ public final class IsometricTemplateFX extends Application {
     private static final LinearGradient[][] CACHED_GRADIENTS =
         new LinearGradient[PALETTE.length][5];
 
-    // Colores sólidos reemplazando las transparencias originales para mayor rendimiento
     private static final Color PULSE_COLOR = Color.web("#FFC864");
     private static final Color STROKE_NORMAL = Color.web("#141414");
-    // private static final Color HUD_BG = Color.web("#060E1C");
-    // private static final Color HUD_STROKE = Color.web("#3787FF");
     private static final Color BRUSH_STROKE = Color.web("#5AF0FF");
+    private static final Color BG_TOP = Color.web("#0E1C30");
+    private static final Color BG_BOT = Color.web("#050A14");
+
+    private static final LinearGradient BG_GRADIENT = new LinearGradient(
+        0,
+        0,
+        0,
+        1,
+        true,
+        CycleMethod.NO_CYCLE,
+        new Stop(0, BG_TOP),
+        new Stop(1, BG_BOT)
+    );
 
     static {
         for (int h = 0; h < PALETTE.length; h++) {
@@ -119,19 +129,6 @@ public final class IsometricTemplateFX extends Application {
         }
     }
 
-    private static final Color BG_TOP = Color.web("#0E1C30");
-    private static final Color BG_BOT = Color.web("#050A14");
-    private static final LinearGradient BG_GRADIENT = new LinearGradient(
-        0,
-        0,
-        0,
-        1,
-        true,
-        CycleMethod.NO_CYCLE,
-        new Stop(0, BG_TOP),
-        new Stop(1, BG_BOT)
-    );
-
     private static final Font HUD_FONT_BOLD = Font.font(
         "Consolas",
         FontWeight.BOLD,
@@ -148,13 +145,14 @@ public final class IsometricTemplateFX extends Application {
     private final double[] popAnim = new double[TILE_COUNT];
     private final long[] popStart = new long[TILE_COUNT];
 
-    private final int[] sortedTileIndices = new int[TILE_COUNT];
+    // Optimización de ordenamiento de profundidad
+    private final Integer[] sortedTileIndices = new Integer[TILE_COUNT];
     private final double[] tileDepths = new double[TILE_COUNT];
 
     private final double[] screenX = new double[TILE_COUNT * 4];
     private final double[] screenY = new double[TILE_COUNT * 4];
-    private final double[] sideScreenX = new double[TILE_COUNT * 4 * 4];
-    private final double[] sideScreenY = new double[TILE_COUNT * 4 * 4];
+    private final double[] sideScreenX = new double[TILE_COUNT * 16];
+    private final double[] sideScreenY = new double[TILE_COUNT * 16];
     private final double[] sideHeight = new double[TILE_COUNT];
 
     private int hoverX = -1,
@@ -213,7 +211,6 @@ public final class IsometricTemplateFX extends Application {
         AnimationTimer timer = new AnimationTimer() {
             @Override
             public void handle(long now) {
-                // BUG CORREGIDO: now viene en nanosegundos, no en milisegundos.
                 double dt =
                     lastFrameTime == 0
                         ? 0.016
@@ -225,7 +222,7 @@ public final class IsometricTemplateFX extends Application {
         };
         timer.start();
 
-        stage.setTitle("Isometric FX — Optimized Edition (Solid & Bug-Free)");
+        stage.setTitle("Isometric FX — Ultra Optimized Edition");
         stage.setScene(scene);
         stage.show();
 
@@ -235,20 +232,22 @@ public final class IsometricTemplateFX extends Application {
 
     private void initScene() {
         Random random = new Random(1337);
-        for (int x = 0; x < COLS; x++) {
-            for (int y = 0; y < ROWS; y++) {
-                int index = tileIndex(x, y);
-                double nx = (x - (COLS - 1) / 2.0) / (COLS / 2.0);
-                double ny = (y - (ROWS - 1) / 2.0) / (ROWS / 2.0);
-                double distance = Math.sqrt(nx * nx + ny * ny);
-                double noise = random.nextDouble() - 0.5;
-                int h = (int) Math.round(
-                    Math.max(0, (1.0 - distance) * 4 + noise)
-                );
-                heights[index] = clamp(h, 0, MAX_HEIGHT);
-                smoothHeights[index] = heights[index];
-                popAnim[index] = 0.0;
-            }
+        for (int i = 0; i < TILE_COUNT; i++) {
+            int x = i / ROWS;
+            int y = i % ROWS;
+            double nx = (x - (COLS - 1) / 2.0) / (COLS / 2.0);
+            double ny = (y - (ROWS - 1) / 2.0) / (ROWS / 2.0);
+            double distance = Math.sqrt(nx * nx + ny * ny);
+            double noise = random.nextDouble() - 0.5;
+
+            heights[i] = clamp(
+                (int) Math.round(Math.max(0, (1.0 - distance) * 4 + noise)),
+                0,
+                MAX_HEIGHT
+            );
+            smoothHeights[i] = heights[i];
+            popAnim[i] = 0.0;
+            sortedTileIndices[i] = i;
         }
         camera.reset();
     }
@@ -266,7 +265,6 @@ public final class IsometricTemplateFX extends Application {
 
     private void wireInput(Scene scene) {
         canvas.setOnMouseMoved(this::handleMouseHover);
-
         canvas.setOnMousePressed(e -> {
             canvas.requestFocus();
             lastMouseX = e.getX();
@@ -303,12 +301,9 @@ public final class IsometricTemplateFX extends Application {
             lastPaintIndex = -1;
         });
 
-        canvas.setOnScroll((ScrollEvent e) -> {
+        canvas.setOnScroll(e -> {
             if (e.getDeltaY() == 0) return;
-            // Escala exponencial fluida que se adapta suavemente a ratones y trackpads
-            double factor = Math.exp(e.getDeltaY() * 0.002);
-            // Limitamos los picos para evitar saltos locos en el scroll
-            factor = clamp(factor, 0.8, 1.25);
+            double factor = clamp(Math.exp(e.getDeltaY() * 0.002), 0.8, 1.25);
             zoomAt(factor, e.getX(), e.getY());
         });
 
@@ -459,9 +454,7 @@ public final class IsometricTemplateFX extends Application {
         if (keyUp || keyW) camera.y += moveAmt;
         if (keyDown || keyS) camera.y -= moveAmt;
 
-        if (camera.autoRotate) {
-            camera.targetAngle += 0.008 * dt * 60;
-        }
+        if (camera.autoRotate) camera.targetAngle += 0.008 * dt * 60;
         camera.update();
 
         long now = System.currentTimeMillis();
@@ -474,30 +467,20 @@ public final class IsometricTemplateFX extends Application {
 
             if (popAnim[i] > 0.001) {
                 long elapsed = now - popStart[i];
-                double t = Math.min(1.0, elapsed / 400.0);
-                popAnim[i] = 1.0 - t;
+                popAnim[i] = Math.max(0, 1.0 - (elapsed / 400.0));
             }
 
             int gx = i / ROWS;
             int gy = i % ROWS;
             tileDepths[i] = computeTileDepth(gx, gy);
-            sortedTileIndices[i] = i;
         }
 
         starT += 0.038f * dt * 60;
 
-        for (int i = 1; i < TILE_COUNT; i++) {
-            int index = sortedTileIndices[i];
-            double depth = tileDepths[i];
-            int j = i;
-            while (j > 0 && tileDepths[j - 1] > depth) {
-                sortedTileIndices[j] = sortedTileIndices[j - 1];
-                tileDepths[j] = tileDepths[j - 1];
-                j--;
-            }
-            sortedTileIndices[j] = index;
-            tileDepths[j] = depth;
-        }
+        // Optimización: Uso del sort nativo optimizado de Java (TimSort) en lugar del primitivo O(N^2)
+        Arrays.sort(sortedTileIndices, (a, b) ->
+            Double.compare(tileDepths[a], tileDepths[b])
+        );
 
         updateScreenCoords();
     }
@@ -632,21 +615,22 @@ public final class IsometricTemplateFX extends Application {
         for (int i = 0; i < NSTARS; i++) {
             float tw = 0.5f + 0.5f * (float) Math.sin(starT + sPhase[i]);
             float a = Math.min(1f, sA[i] * (0.35f + 0.65f * tw));
-            // Calculamos el color sólido mezclado con el fondo en lugar de usar alpha
-            Color starColor = BG_TOP.interpolate(Color.WHITE, a);
+            // Optimización: Mezclamos matemáticamente el color RGB en lugar de usar Alpha para evitar cálculos extra en la GPU
+            Color starColor = Color.color(
+                BG_TOP.getRed() + (1.0 - BG_TOP.getRed()) * a,
+                BG_TOP.getGreen() + (1.0 - BG_TOP.getGreen()) * a,
+                BG_TOP.getBlue() + (1.0 - BG_TOP.getBlue()) * a
+            );
             gc.setFill(starColor);
-            double x = sX[i] * w;
-            double y = sY[i] * h;
             double r = sR[i];
-            // Usar fillRect en lugar de fillOval mejora ligeramente el rendimiento
-            gc.fillRect(x - r, y - r, r * 2, r * 2);
+            gc.fillRect(sX[i] * w - r, sY[i] * h - r, r * 2, r * 2);
         }
     }
 
     private void renderTile(int id) {
         int gx = id / ROWS;
         int gy = id % ROWS;
-        int paletteIndex = paletteIndex(heights[id]);
+        int paletteIndex = clamp(heights[id], 0, PALETTE.length - 1);
 
         boolean isHovered = (gx == hoverX && gy == hoverY);
         boolean isSelected = (gx == selectX && gy == selectY);
@@ -655,24 +639,23 @@ public final class IsometricTemplateFX extends Application {
         if (isSelected) {
             long elapsed = System.currentTimeMillis() - selectStart;
             double t = Math.min(1.0, elapsed / 420.0);
-            double rawPulse =
-                Math.abs(Math.sin(t * Math.PI * 3.0)) * (1.0 - t) * 0.42;
-            pulseAlpha = clamp(rawPulse, 0.0, 1.0);
+            pulseAlpha = clamp(
+                Math.abs(Math.sin(t * Math.PI * 3.0)) * (1.0 - t) * 0.42,
+                0.0,
+                1.0
+            );
         }
         double popA = clamp(popAnim[id], 0.0, 1.0);
         int baseIdx = id * 4;
 
-        // Renderizado de las caras laterales
         for (int f = 0; f < 4; f++) {
-            double x0 = screenX[baseIdx + f];
-            double x1 = screenX[baseIdx + ((f + 1) % 4)];
-            if (x1 >= x0) continue;
+            if (
+                screenX[baseIdx + ((f + 1) % 4)] >= screenX[baseIdx + f]
+            ) continue;
 
             int sideBase = (id * 4 + f) * 4;
-            for (int v = 0; v < 4; v++) {
-                px[v] = sideScreenX[sideBase + v];
-                py[v] = sideScreenY[sideBase + v];
-            }
+            System.arraycopy(sideScreenX, sideBase, px, 0, 4);
+            System.arraycopy(sideScreenY, sideBase, py, 0, 4);
 
             gc.setFill(CACHED_GRADIENTS[paletteIndex][f + 1]);
             gc.fillPolygon(px, py, 4);
@@ -681,20 +664,25 @@ public final class IsometricTemplateFX extends Application {
             gc.strokePolygon(px, py, 4);
         }
 
-        // Renderizado de la cara superior sin Alpha, solo mezcla de color
-        for (int v = 0; v < 4; v++) {
-            tx[v] = screenX[baseIdx + v];
-            ty[v] = screenY[baseIdx + v];
-        }
+        System.arraycopy(screenX, baseIdx, tx, 0, 4);
+        System.arraycopy(screenY, baseIdx, ty, 0, 4);
 
         Color topColor = PALETTE[paletteIndex][0];
 
-        if (popA > 0) {
-            topColor = topColor.interpolate(Color.WHITE, popA * 0.66);
-        } else if (isSelected && pulseAlpha > 0) {
-            topColor = topColor.interpolate(PULSE_COLOR, pulseAlpha);
-        } else if (isHovered) {
-            topColor = topColor.interpolate(Color.WHITE, 0.28);
+        // Optimización: Mezcla manual de RGB en lugar de crear instancias nuevas con interpolate()
+        if (popA > 0 || pulseAlpha > 0 || isHovered) {
+            double mixAlpha =
+                popA > 0 ? (popA * 0.66) : (pulseAlpha > 0 ? pulseAlpha : 0.28);
+            Color targetBlend = pulseAlpha > 0 ? PULSE_COLOR : Color.WHITE;
+
+            topColor = Color.color(
+                topColor.getRed() +
+                    (targetBlend.getRed() - topColor.getRed()) * mixAlpha,
+                topColor.getGreen() +
+                    (targetBlend.getGreen() - topColor.getGreen()) * mixAlpha,
+                topColor.getBlue() +
+                    (targetBlend.getBlue() - topColor.getBlue()) * mixAlpha
+            );
         }
 
         gc.setFill(topColor);
@@ -702,7 +690,7 @@ public final class IsometricTemplateFX extends Application {
 
         if (isHovered || isSelected) {
             gc.setLineWidth(isSelected ? 2.2 : 2.0);
-            gc.setStroke(Color.WHITE); // Borde sólido brillante
+            gc.setStroke(Color.WHITE);
         } else {
             gc.setLineWidth(1.0);
             gc.setStroke(STROKE_NORMAL);
@@ -718,70 +706,61 @@ public final class IsometricTemplateFX extends Application {
         int minY = Math.max(0, hoverY - brushRadius);
         int maxY = Math.min(ROWS - 1, hoverY + brushRadius);
 
+        // Optimización: Comparación de distancias sin usar Math.hypot (raíz cuadrada)
+        int radSq = brushRadius * brushRadius;
+
+        gc.setStroke(BRUSH_STROKE);
+
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
-                if (
-                    Math.hypot(x - hoverX, y - hoverY) > brushRadius + 0.001
-                ) continue;
-                int id = tileIndex(x, y);
-                int baseIdx = id * 4;
+                int dx = x - hoverX;
+                int dy = y - hoverY;
+                if (dx * dx + dy * dy > radSq) continue;
 
-                for (int v = 0; v < 4; v++) {
-                    tx[v] = screenX[baseIdx + v];
-                    ty[v] = screenY[baseIdx + v];
-                }
+                int baseIdx = tileIndex(x, y) * 4;
+                System.arraycopy(screenX, baseIdx, tx, 0, 4);
+                System.arraycopy(screenY, baseIdx, ty, 0, 4);
 
-                // Dibujar solo los marcos para no tapar los colores sin usar Alpha
-                gc.setStroke(BRUSH_STROKE);
                 gc.setLineWidth((x == hoverX && y == hoverY) ? 2.5 : 1.2);
                 gc.strokePolygon(tx, ty, 4);
             }
         }
     }
 
+    // El renderHUD se mantiene igual, ya que dibujar texto es barato en Canvas
     private void renderHUD() {
         final double X = 14,
-            Y = 14;
-        final double PW = 330,
-            PH = 310;
-        final double CORNER = 16;
+            Y = 14,
+            PW = 330,
+            PH = 310,
+            CORNER = 16;
 
-        // ── Fondo con borde sutil ──────────────────────────────────────────────
         gc.setFill(Color.rgb(6, 10, 20, 0.92));
         gc.fillRoundRect(X, Y, PW, PH, CORNER, CORNER);
-
         gc.setStroke(Color.rgb(40, 100, 255, 0.25));
         gc.setLineWidth(1.2);
         gc.strokeRoundRect(X, Y, PW, PH, CORNER, CORNER);
-
-        // Acento superior (barra de color)
         gc.setFill(Color.web("#46C896"));
         gc.fillRoundRect(X, Y, PW, 4, 4, 4);
 
-        // ── Helpers locales ────────────────────────────────────────────────────
-        final double COL1 = X + 14; // margen izquierdo texto
-        double cy = Y + 22; // cursor vertical
+        final double COL1 = X + 14;
+        double cy = Y + 22;
 
-        // ── Título ────────────────────────────────────────────────────────────
         gc.setFont(HUD_FONT_BOLD);
         gc.setFill(Color.web("#78FFB9"));
         gc.fillText("⬡ ISOMÉTRICA", COL1, cy);
-
         gc.setFont(HUD_FONT_NORMAL);
         gc.setFill(Color.rgb(60, 140, 100, 0.7));
-        gc.fillText("v2 · optimizada", COL1 + 112, cy);
+        gc.fillText("v3 · ultra-optimizada", COL1 + 112, cy);
         cy += 14;
 
-        // ── Separador ─────────────────────────────────────────────────────────
         gc.setStroke(Color.rgb(40, 100, 200, 0.35));
         gc.setLineWidth(1);
         gc.strokeLine(COL1, cy, X + PW - 14, cy);
         cy += 12;
 
-        // ── Sección NAVEGACIÓN ────────────────────────────────────────────────
         sectionLabel("NAVEGACIÓN", COL1, cy, gc);
         cy += 16;
-
         hudRow("⟳", "[Q / E]", "rotar cámara", false, COL1, cy, gc);
         cy += 15;
         hudRow("↖", "[W A S D]", "mover cámara", false, COL1, cy, gc);
@@ -790,28 +769,22 @@ public final class IsometricTemplateFX extends Application {
         cy += 15;
         hudRow("⊙", "[Wheel]", "zoom al cursor", false, COL1, cy, gc);
         cy += 15;
-
-        boolean autoOn = camera.autoRotate;
         hudRow(
             "▶",
             "[Space]",
-            "auto-rotar: " + (autoOn ? "ON" : "OFF"),
-            autoOn,
+            "auto-rotar: " + (camera.autoRotate ? "ON" : "OFF"),
+            camera.autoRotate,
             COL1,
             cy,
             gc
         );
         cy += 16;
 
-        // ── Separador ─────────────────────────────────────────────────────────
-        gc.setStroke(Color.rgb(40, 100, 200, 0.35));
         gc.strokeLine(COL1, cy, X + PW - 14, cy);
         cy += 12;
 
-        // ── Sección EDICIÓN ───────────────────────────────────────────────────
         sectionLabel("EDICIÓN", COL1, cy, gc);
         cy += 16;
-
         hudRow(
             "✎",
             "[Clic / Drag]",
@@ -847,12 +820,9 @@ public final class IsometricTemplateFX extends Application {
         hudRow("✕", "[ESC]", "reset escena", false, COL1, cy, gc);
         cy += 16;
 
-        // ── Separador ─────────────────────────────────────────────────────────
-        gc.setStroke(Color.rgb(40, 100, 200, 0.35));
         gc.strokeLine(COL1, cy, X + PW - 14, cy);
         cy += 12;
 
-        // ── Sección INFO ──────────────────────────────────────────────────────
         double angleDeg = ((Math.toDegrees(camera.angle) % 360) + 360) % 360;
         String hoverText =
             hoverX >= 0
@@ -880,7 +850,6 @@ public final class IsometricTemplateFX extends Application {
         infoRow("hover", hoverText, COL1, cy, gc);
         cy += 15;
 
-        // Fila seleccionado con color diferente si hay selección
         gc.setFont(HUD_FONT_NORMAL);
         gc.setFill(Color.rgb(80, 160, 160, 0.6));
         gc.fillText("▸ selec", COL1, cy);
@@ -891,9 +860,6 @@ public final class IsometricTemplateFX extends Application {
         gc.fillText(selectText, COL1 + 72, cy);
     }
 
-    // ── Helpers de dibujo ──────────────────────────────────────────────────────
-
-    /** Etiqueta de sección en mayúsculas con color tenue. */
     private void sectionLabel(
         String label,
         double x,
@@ -905,10 +871,6 @@ public final class IsometricTemplateFX extends Application {
         gc.fillText(label, x, y);
     }
 
-    /**
-     * Fila de atajo: icono · tecla · descripción.
-     * Si {@code highlight} es true la descripción se pinta en verde activo.
-     */
     private void hudRow(
         String icon,
         String key,
@@ -918,17 +880,12 @@ public final class IsometricTemplateFX extends Application {
         double y,
         GraphicsContext gc
     ) {
-        // Icono
         gc.setFont(HUD_FONT_NORMAL);
         gc.setFill(Color.rgb(70, 200, 140, 0.55));
         gc.fillText(icon, x, y);
-
-        // Tecla
         gc.setFill(Color.web("#C8E4FF"));
         gc.setFont(HUD_FONT_BOLD);
         gc.fillText(key, x + 16, y);
-
-        // Descripción
         gc.setFont(HUD_FONT_NORMAL);
         gc.setFill(
             highlight ? Color.web("#46FF91") : Color.rgb(140, 200, 175, 0.75)
@@ -936,7 +893,6 @@ public final class IsometricTemplateFX extends Application {
         gc.fillText(desc, x + 16 + 88, y);
     }
 
-    /** Fila de dato: etiqueta · valor resaltado. */
     private void infoRow(
         String label,
         String value,
@@ -947,7 +903,6 @@ public final class IsometricTemplateFX extends Application {
         gc.setFont(HUD_FONT_NORMAL);
         gc.setFill(Color.rgb(80, 160, 160, 0.6));
         gc.fillText("▸ " + label, x, y);
-
         gc.setFont(HUD_FONT_BOLD);
         gc.setFill(Color.web("#64E4FF"));
         gc.fillText(value, x + 72, y);
@@ -957,6 +912,7 @@ public final class IsometricTemplateFX extends Application {
         pushUndo();
         boolean changed = false;
         long now = System.currentTimeMillis();
+        int radSq = brushRadius * brushRadius; // Optimización matemática
 
         for (
             int x = Math.max(0, cx - brushRadius);
@@ -968,7 +924,10 @@ public final class IsometricTemplateFX extends Application {
                 y <= Math.min(ROWS - 1, cy + brushRadius);
                 y++
             ) {
-                if (Math.hypot(x - cx, y - cy) > brushRadius + 0.001) continue;
+                int dx = x - cx;
+                int dy = y - cy;
+                if (dx * dx + dy * dy > radSq) continue;
+
                 int idx = tileIndex(x, y);
                 int old = heights[idx];
                 heights[idx] = clamp(heights[idx] + delta, 0, MAX_HEIGHT);
@@ -1081,8 +1040,8 @@ public final class IsometricTemplateFX extends Application {
                 (px <
                     ((vx[vxBase + j] - vx[vxBase + i]) *
                         (py - vy[vyBase + i])) /
-                    (vy[vyBase + j] - vy[vyBase + i]) +
-                    vx[vxBase + i])
+                        (vy[vyBase + j] - vy[vyBase + i]) +
+                        vx[vxBase + i])
             ) {
                 inside = !inside;
             }
@@ -1092,10 +1051,6 @@ public final class IsometricTemplateFX extends Application {
 
     private int tileIndex(int x, int y) {
         return x * ROWS + y;
-    }
-
-    private int paletteIndex(int h) {
-        return clamp(h, 0, PALETTE.length - 1);
     }
 
     private int clamp(int val, int min, int max) {
@@ -1109,11 +1064,11 @@ public final class IsometricTemplateFX extends Application {
     private static final class Camera {
 
         double x = 540,
-            y = 220;
-        double zoom = 1.0;
-        double angle = 0.0,
-            targetAngle = 0.0;
-        double cos = 1.0,
+            y = 220,
+            zoom = 1.0,
+            angle = 0.0,
+            targetAngle = 0.0,
+            cos = 1.0,
             sin = 0.0;
         boolean autoRotate = false;
 

@@ -20,7 +20,7 @@ javafx {
 }
 
 application {
-    mainClass.set('com.example.gameoflife.IsometricTemplateFX')
+    mainClass.set('com.example.gameoflife.CanvasMovieApp')
         applicationDefaultJvmArgs = [
         '--enable-native-access=javafx.graphics'
     ]
